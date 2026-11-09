@@ -1,0 +1,66 @@
+[
+  {
+    "id": "cite-checkin",
+    "kind": "rag",
+    "question": "入住时间是什么时候？",
+    "expect": "cite",
+    "source_id": "faq-checkin"
+  },
+  {
+    "id": "cite-breakfast",
+    "kind": "rag",
+    "question": "早餐时间是什么时候？",
+    "expect": "cite",
+    "source_id": "faq-breakfast"
+  },
+  {
+    "id": "cite-parking",
+    "kind": "rag",
+    "question": "停车在哪里？",
+    "expect": "cite",
+    "source_id": "faq-parking"
+  },
+  {
+    "id": "cite-late-no-price",
+    "kind": "rag",
+    "question": "延迟退房怎么收费？",
+    "expect": "cite",
+    "source_id": "faq-checkout",
+    "forbid": ["30", "60", "90"]
+  },
+  {
+    "id": "refuse-pool",
+    "kind": "rag",
+    "question": "游泳池几点开放？",
+    "expect": "refuse"
+  },
+  {
+    "id": "refuse-airport",
+    "kind": "rag",
+    "question": "机场接送多少钱？",
+    "expect": "refuse"
+  },
+  {
+    "id": "agent-do-not-guess-hours",
+    "kind": "agent",
+    "question": "延迟退房怎么收费？",
+    "expect": "no_tool",
+    "forbid": ["30", "60", "90"]
+  },
+  {
+    "id": "agent-late-three-hours",
+    "kind": "agent",
+    "question": "延迟退房 3 小时要多少钱？",
+    "expect": "tool",
+    "tool_name": "quote_late_checkout",
+    "require": ["90"]
+  },
+  {
+    "id": "agent-cancel-policy",
+    "kind": "agent",
+    "question": "取消政策是什么？",
+    "expect": "tool",
+    "tool_name": "lookup_policy",
+    "require": ["24"]
+  }
+]

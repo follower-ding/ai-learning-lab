@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-learning-lab"
+version = "0.1.0"
+description = "面向应用开发的 AI 学习实验：从一次调用走到可引用、会拒绝的检索，以及有步数上限的工具循环。"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx==0.28.1",
+    "python-dotenv==1.0.1",
+    "pytest==8.3.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ailab = ["data/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: 调用真实 HTTP API。未设置 OPENAI_API_KEY 时跳过。",
+]
