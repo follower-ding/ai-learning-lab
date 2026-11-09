@@ -14,3 +14,4 @@ lessons:
 	$(PY) lessons/06-tool-calling/exercise.py
 	$(PY) lessons/07-agent-loop/exercise.py
 	$(PY) lessons/08-tiny-eval/exercise.py
+	$(PY) lessons/09-hybrid-retrieval/exercise.py

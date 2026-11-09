@@ -18,6 +18,7 @@ LESSONS = [
     "lessons/06-tool-calling/exercise.py",
     "lessons/07-agent-loop/exercise.py",
     "lessons/08-tiny-eval/exercise.py",
+    "lessons/09-hybrid-retrieval/exercise.py",
 ]
 
 

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "literal-checkin",
+    "question": "入住时间是什么时候？",
+    "expect": "hit",
+    "source_id": "faq-checkin"
+  },
+  {
+    "id": "paraphrase-room",
+    "question": "我什么时候能进房间",
+    "expect": "hit",
+    "source_id": "faq-checkin"
+  },
+  {
+    "id": "afternoon-checkin",
+    "question": "下午可以住吗",
+    "expect": "hit",
+    "source_id": "faq-checkin"
+  },
+  {
+    "id": "luggage",
+    "question": "行李可以先放前台吗",
+    "expect": "hit",
+    "source_id": "faq-checkin"
+  },
+  {
+    "id": "breakfast",
+    "question": "早餐时间是什么时候？",
+    "expect": "hit",
+    "source_id": "faq-breakfast"
+  },
+  {
+    "id": "refuse-band",
+    "question": "今晚有乐队演出吗",
+    "expect": "refuse"
+  },
+  {
+    "id": "refuse-pool",
+    "question": "游泳池几点开放？",
+    "expect": "refuse"
+  },
+  {
+    "id": "refuse-dog",
+    "question": "可以带狗吗",
+    "expect": "refuse"
+  },
+  {
+    "id": "refuse-generic-time",
+    "question": "时间",
+    "expect": "refuse"
+  },
+  {
+    "id": "refuse-wrong-checkin",
+    "question": "什么时候能入住",
+    "expect": "refuse"
+  },
+  {
+    "id": "boundary-early",
+    "question": "早到怎么办",
+    "expect": "refuse"
+  }
+]
