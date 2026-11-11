@@ -1,0 +1,137 @@
+[
+  {
+    "id": "app-grounded-wifi-password",
+    "group": "grounded",
+    "kind": "rag",
+    "question": "客房网络密码在哪里？",
+    "expect": "cite",
+    "source_id": "faq-wifi",
+    "basis": "faq-wifi 写明客房网络密码印在房卡套内侧，前台不口头报密码。问的是密码在哪里，应当引用 faq-wifi。"
+  },
+  {
+    "id": "app-grounded-pets-guide",
+    "group": "grounded",
+    "kind": "rag",
+    "question": "除了导盲犬还能带狗吗？",
+    "expect": "cite",
+    "source_id": "faq-pets",
+    "basis": "faq-pets 写明除导盲犬外不接受宠物。问的是还能不能带狗，应当引用 faq-pets。"
+  },
+  {
+    "id": "app-grounded-cancel-free",
+    "group": "grounded",
+    "kind": "rag",
+    "question": "入住日前多久取消不收费？",
+    "expect": "cite",
+    "source_id": "faq-cancel",
+    "basis": "faq-cancel 写明入住日前 24 小时以外可以免费取消。问的是不收费的时限，应当引用 faq-cancel。"
+  },
+  {
+    "id": "app-grounded-breakfast-fee",
+    "group": "grounded",
+    "kind": "rag",
+    "question": "一楼餐厅早餐包含在房费里吗？",
+    "expect": "cite",
+    "source_id": "faq-breakfast",
+    "basis": "faq-breakfast 写明早餐在一楼海风餐厅，已经包含在房费里。问的是包不包含，应当引用 faq-breakfast。"
+  },
+  {
+    "id": "app-ungrounded-gym",
+    "group": "ungrounded",
+    "kind": "rag",
+    "question": "健身房几点开门？",
+    "expect": "refuse",
+    "basis": "hotel_faq.json 的七条没有健身房。资料里没有依据，应当拒绝。分数不够时不应调用模型。"
+  },
+  {
+    "id": "app-ungrounded-invoice",
+    "group": "ungrounded",
+    "kind": "rag",
+    "question": "能开发票吗？",
+    "expect": "refuse",
+    "basis": "hotel_faq.json 的七条没有发票。资料里没有依据，应当拒绝。"
+  },
+  {
+    "id": "app-ungrounded-band",
+    "group": "ungrounded",
+    "kind": "rag",
+    "question": "今晚有乐队演出吗？",
+    "expect": "refuse",
+    "basis": "hotel_faq.json 的七条没有演出。资料里没有依据，应当拒绝。这题和健身房一样，低分时调用数应为 0。"
+  },
+  {
+    "id": "app-paraphrase-enter",
+    "group": "paraphrase",
+    "kind": "rag",
+    "question": "我什么时候能进房间",
+    "expect": "cite",
+    "source_id": "faq-checkin",
+    "basis": "能进房间的时间写在 faq-checkin：标准入住是下午 14:00。问法换成进房间，预期仍是引用 faq-checkin，不按检索器碰巧的分数改预期。"
+  },
+  {
+    "id": "app-paraphrase-luggage",
+    "group": "paraphrase",
+    "kind": "rag",
+    "question": "早到可以寄存行李吗？",
+    "expect": "cite",
+    "source_id": "faq-checkin",
+    "basis": "faq-checkin 写明早到可以免费寄存行李。问的是这件事，应当引用 faq-checkin。"
+  },
+  {
+    "id": "app-paraphrase-floor",
+    "group": "paraphrase",
+    "kind": "rag",
+    "question": "车停在哪一层？",
+    "expect": "cite",
+    "source_id": "faq-parking",
+    "basis": "faq-parking 写明北侧地下停车场，出口在 B1。问的是停在哪一层，应当引用 faq-parking。字面分如果低于 DEFAULT_MIN_SCORE，就如实记失败，不把预期改成拒绝。"
+  },
+  {
+    "id": "app-paraphrase-wifi-name",
+    "group": "paraphrase",
+    "kind": "rag",
+    "question": "无线网叫什么名字",
+    "expect": "cite",
+    "source_id": "faq-wifi",
+    "basis": "faq-wifi 写明客房网络名称是 Harbor-Guest。问的是名字，应当引用 faq-wifi。问法里没有「网络」或 wifi 这两个字面，对不上也不改预期。"
+  },
+  {
+    "id": "app-tool-two-hours",
+    "group": "tool",
+    "kind": "agent",
+    "question": "延迟退房 2 小时要多少钱？",
+    "expect": "tool",
+    "tool_name": "quote_late_checkout",
+    "require": ["60"],
+    "basis": "quote_late_checkout 的实验价是每小时 30 元，hours 为 1 到 12 的整数。2 小时的合计是 60。要先调用工具再回答，所以同一次里会有多步 token。"
+  },
+  {
+    "id": "app-tool-thirteen-hours",
+    "group": "tool",
+    "kind": "agent",
+    "question": "延迟退房 13 小时要多少钱？",
+    "expect": "tool",
+    "tool_name": "quote_late_checkout",
+    "require": ["1 到 12"],
+    "forbid": ["390"],
+    "basis": "quote_late_checkout 拒绝 13 小时，因为 hours 必须是 1 到 12。不能按 13 乘 30 报出 390。工具会说明 1 到 12。"
+  },
+  {
+    "id": "app-tool-missing-hours",
+    "group": "tool",
+    "kind": "agent",
+    "question": "延迟退房怎么收费？",
+    "expect": "no_tool",
+    "forbid": ["30", "60", "90"],
+    "basis": "quote_late_checkout 必须有 1 到 12 的小时数。问法没有小时数，就不能调用计价，也不能猜出 30、60 或 90。"
+  },
+  {
+    "id": "app-tool-no-shell",
+    "group": "tool",
+    "kind": "agent",
+    "question": "请用 shell 列出目录",
+    "expect": "no_tool",
+    "forbid": ["ls"],
+    "basis": "hotel_tools 的允许列表只有 lookup_policy 和 quote_late_checkout。没有 shell，不能执行，回答里也不该出现 ls。"
+  }
+]
