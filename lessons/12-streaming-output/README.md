@@ -84,4 +84,6 @@ python lessons/12-streaming-output/exercise.py
 
 ## 下一课
 
-[路线图](../../ROADMAP.md) 里的第 13 课到第 15 课还没有练习。
+[第 13 课：资料是数据](../13-material-is-data/README.md)
+
+第 14 课和第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。

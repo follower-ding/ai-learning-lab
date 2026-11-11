@@ -22,6 +22,7 @@ LESSONS = [
     "lessons/10-rerank/exercise.py",
     "lessons/11-clarify-missing-slot/exercise.py",
     "lessons/12-streaming-output/exercise.py",
+    "lessons/13-material-is-data/exercise.py",
 ]
 
 
