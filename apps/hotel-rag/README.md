@@ -58,13 +58,15 @@ python apps/hotel-rag/demo.py --trace-dir /tmp/hotel-rag-traces
 
 `app_cases.json` 是给这个入口用的题，至少 12 条，id 不能重复。题面来自现有规章和两只工具的边界，分成有据、无据、改写、工具边界。每条都有 `basis`，写明预期对应哪条资料或哪条工具规则。
 
-`app_eval.py` 对每一题调用一次现有的 `run_eval([case], client=meter)`。评分仍是原来的 `_grade`，这里不复制一套。`meter` 包住离线 Mock 的 `complete`，签名不变，返回原来的 Completion，只把这一次的 token 字段累加起来。耗时只包住这一次 `run_eval`，不为了记数再跑一遍。
+`app_eval.py` 对每一题调用一次现有的 `run_eval([case], client=meter)`。评分仍是原来的 `_grade`，这里不复制一套。`meter` 包住离线 Mock 的 `complete`，签名不变，返回原来的 Completion。`calls` 是尝试次数，进入调用之前加一。只有成功返回的整数 token 才累加。某次尝试没有返回时，整题标 `unknown`，不印数字，也不把中途小计当成完整用量。耗时只包住这一次 `run_eval`。
 
-低分拒绝不会调用模型，调用数是 0。工具要先调用再回答时，同一次里的多步 token 加在一起。某一题抛出异常时，这一行记成 `status=error`，不算通过。
+低分拒绝不会调用模型，`calls=0` 且 token 为 0、`token_source=estimated`。这是 Mock 没被调用，不是供应商 usage 的 0。工具要先调用再回答时，同一次里成功返回的多步 token 加在一起。某一题抛出异常时，这一行记成 `status=error`，不算通过。
 
 Mock 的 token 来自 `estimate_tokens`，报告里标 `token_source=estimated`。这不是供应商 usage，也不是账单。现有 Completion 证明不了真实用量；字段不是整数，或客户端不是这个 Mock 时，标 `token_source=unknown`，并且不把数字印出来。
 
-这不是语义检索的生产效果。字面向量对不上的改写，预期仍按资料写。对不上就在报告里记失败，不把预期改成拒绝来凑全过。
+这不是语义检索的生产效果，也不是把所有秘密都滤掉的过滤器。报告和用例集错误会走现有的 `redact`，它仍然只有原来的两种样式。
+
+字面向量对不上的改写，预期仍按关联写。对不上就在报告里记失败，不把预期改成拒绝来凑全过。`app-paraphrase-floor` 只检查会不会引用停车资料，正文并没有写车位楼层，引用成功也不证明楼层。
 
 退出码：
 

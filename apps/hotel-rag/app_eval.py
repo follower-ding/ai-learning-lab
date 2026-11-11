@@ -38,8 +38,8 @@ class AppCaseError(Exception):
     """用例集本身不合法。此时还没有评分。"""
 
     def __init__(self, problems: list[str]) -> None:
-        self.problems = problems
-        super().__init__("；".join(problems))
+        self.problems = [redact(problem) for problem in problems]
+        super().__init__("；".join(self.problems))
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,13 @@ class MeasureRow:
 
 
 class TokenMeter:
-    """包住一次 complete。签名不变，返回原来的 Completion，只累加这一次的 token 字段。"""
+    """包住一次 complete。签名不变，返回原来的 Completion。
+
+    ``calls`` 是尝试次数：进入 ``complete`` 之前加一，不管这次最后有没有返回。
+    只有成功返回、并且两个 token 字段都是整数时，才把它们累加进内部小计。
+    某次尝试抛出异常，或 token 字段不能用，整题就是 unknown。
+    这时内部小计不完整，不能当作这一题的完整用量。
+    """
 
     def __init__(self, inner: ChatClient) -> None:
         self._inner = inner
@@ -75,8 +81,12 @@ class TokenMeter:
         self._is_mock = isinstance(inner, MockChatClient)
 
     def complete(self, messages: list, *, temperature: float = 0.0) -> Completion:
-        completion = self._inner.complete(messages, temperature=temperature)
         self.calls += 1
+        try:
+            completion = self._inner.complete(messages, temperature=temperature)
+        except Exception:
+            self._tokens_known = False
+            raise
         prompt = completion.prompt_tokens
         completion_tokens = completion.completion_tokens
         if _is_token_count(prompt) and _is_token_count(completion_tokens):
@@ -101,6 +111,8 @@ def load_app_cases(path: Path | None = None) -> list[AppCase]:
     path = CASES_PATH if path is None else path
     try:
         raw_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise AppCaseError([f"{path.name} 不是 UTF-8 文本"]) from None
     except OSError as exc:
         raise AppCaseError([f"读不到用例集：{path.name}：{exc.strerror or exc}"]) from exc
     try:
@@ -146,8 +158,12 @@ def load_app_cases(path: Path | None = None) -> list[AppCase]:
         if not isinstance(basis, str) or not basis.strip():
             problems.append(f"{label_id} 缺少 basis。预期要写明来自哪条资料或哪条工具边界")
             basis = ""
-        source_id = _optional_text(row.get("source_id"))
-        tool_name = _optional_text(row.get("tool_name"))
+        source_id, source_type = _optional_str(row, "source_id", label_id)
+        tool_name, tool_type = _optional_str(row, "tool_name", label_id)
+        if source_type:
+            problems.append(source_type)
+        if tool_type:
+            problems.append(tool_type)
         forbid, forbid_problem = _string_list(row.get("forbid", []), f"{label_id} 的 forbid")
         require, require_problem = _string_list(row.get("require", []), f"{label_id} 的 require")
         if forbid_problem:
@@ -157,18 +173,21 @@ def load_app_cases(path: Path | None = None) -> list[AppCase]:
         overlap = sorted(set(forbid) & set(require))
         if overlap:
             problems.append(f"{label_id} 的 require 和 forbid 重叠：{', '.join(overlap)}")
-        problems.extend(
-            _combination_problems(
-                label_id,
-                kind=kind,
-                expect=expect,
-                source_id=source_id,
-                tool_name=tool_name,
-                known_sources=known_sources,
-                known_tools=known_tools,
+        typed_ok = not source_type and not tool_type
+        if typed_ok:
+            problems.extend(
+                _combination_problems(
+                    label_id,
+                    kind=kind,
+                    expect=expect,
+                    source_id=source_id,
+                    tool_name=tool_name,
+                    known_sources=known_sources,
+                    known_tools=known_tools,
+                )
             )
-        )
-        if problems and not case_id:
+        row_bad = bool(source_type or tool_type or forbid_problem or require_problem or overlap)
+        if row_bad or (problems and not case_id):
             continue
         if kind not in {"rag", "agent"} or not _expect_matches(kind, expect):
             continue
@@ -219,8 +238,10 @@ def format_report(rows: list[MeasureRow]) -> str:
     lines = [
         "岸港酒店应用评测",
         "离线 Mock。逐题调用现有的 run_eval，不重跑，也不打六字段追踪。",
+        "calls 是 complete 的尝试次数，进入调用之前加一。成功返回才累加 token。",
+        "calls=0 且 token 为 0、token_source=estimated，表示这次 Mock 没有被调用，不是供应商 usage 的 0。",
         "token_source=estimated 是 Mock 的 estimate_tokens 估算，不是供应商 usage，也不是账单。",
-        "token_source=unknown 表示现有 Completion 证明不了用量，这里不把它印成数字。",
+        "token_source=unknown 表示这一题的 token 不完整或证明不了用量。不印数字，也不能把中途小计当成完整用量。",
         "退出码：0 全部通过；1 有失败或错误；2 用例集不合法，尚未评分。",
         "失败照实列出。预期按资料和工具边界写，不用 Mock 碰巧的结果改预期。",
     ]
@@ -234,11 +255,13 @@ def format_report(rows: list[MeasureRow]) -> str:
         else:
             tokens = "prompt_tokens=unknown  completion_tokens=unknown"
         lines.append(
-            f"{row.case_id}  {mark}  status={row.status}  calls={row.calls}  "
-            f"elapsed_ms={row.elapsed_ms:.3f}  {tokens}  token_source={row.token_source}  "
-            f"group={row.group}  {row.detail}"
+            redact(
+                f"{row.case_id}  {mark}  status={row.status}  calls={row.calls}  "
+                f"elapsed_ms={row.elapsed_ms:.3f}  {tokens}  token_source={row.token_source}  "
+                f"group={row.group}  {row.detail}"
+            )
         )
-        lines.append(f"  依据：{row.basis}")
+        lines.append(redact(f"  依据：{row.basis}"))
     lines.append(f"合计 通过 {passed}  失败 {failed}  错误 {errors}  / {len(rows)}")
     return "\n".join(lines)
 
@@ -256,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cases = load_app_cases(args.cases)
     except AppCaseError as exc:
-        print(f"用例集不能用：{exc}")
+        print(redact(f"用例集不能用：{exc}"))
         return 2
     rows = [measure_case(app_case, MockChatClient()) for app_case in cases]
     print(format_report(rows))
@@ -336,10 +359,15 @@ def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _optional_text(value: object) -> str:
-    if value is None:
-        return ""
-    return _text(value)
+def _optional_str(row: dict, key: str, label: str) -> tuple[str, str]:
+    """缺省或 null 当成没写。写了就先看是不是字符串，再交给组合检查。"""
+
+    if key not in row or row[key] is None:
+        return "", ""
+    value = row[key]
+    if not isinstance(value, str):
+        return "", f"{label} 的 {key} 必须是字符串"
+    return value.strip(), ""
 
 
 def _is_token_count(value: object) -> bool:

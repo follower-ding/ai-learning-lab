@@ -84,7 +84,7 @@
     "question": "车停在哪一层？",
     "expect": "cite",
     "source_id": "faq-parking",
-    "basis": "faq-parking 写明北侧地下停车场，出口在 B1。问的是停在哪一层，应当引用 faq-parking。字面分如果低于 DEFAULT_MIN_SCORE，就如实记失败，不把预期改成拒绝。"
+    "basis": "这题只检查问句会不会关联到停车资料 faq-parking，不证明车位在哪一层。正文写了北侧地下停车场，也写了出口在 B1 东侧，没有写车位楼层。字面分低于 DEFAULT_MIN_SCORE 时如实记失败，不改成拒绝，也不改阈值。"
   },
   {
     "id": "app-paraphrase-wifi-name",

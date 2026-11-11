@@ -57,6 +57,7 @@ def test_shipped_cases_are_unique_and_cover_the_four_boundaries(app_eval) -> Non
     floor = next(item for item in cases if item.case.id == "app-paraphrase-floor")
     wifi_name = next(item for item in cases if item.case.id == "app-paraphrase-wifi-name")
     assert floor.case.expect == "cite" and floor.case.source_id == "faq-parking"
+    assert "不证明车位在哪一层" in floor.basis
     assert wifi_name.case.expect == "cite" and wifi_name.case.source_id == "faq-wifi"
     course = load_cases()
     assert [item.id for item in course] == list(COURSE_IDS)
@@ -113,8 +114,9 @@ def test_report_uses_one_run_and_lists_real_failures(app_eval, monkeypatch: pyte
     cases = app_eval.load_app_cases()
     assert calls["n"] == len(cases)
     assert code == 1
-    assert "不是供应商 usage" in output
-    assert "也不是账单" in output
+    assert "进入调用之前加一" in output
+    assert "不是供应商 usage 的 0" in output
+    assert "不是供应商 usage，也不是账单" in output
     assert "退出码：0 全部通过；1 有失败或错误；2 用例集不合法" in output
     assert "问题：" not in output
     assert "最高分：" not in output
@@ -217,12 +219,205 @@ def test_exception_is_an_error_and_not_a_pass(app_eval, monkeypatch: pytest.Monk
     output = capsys.readouterr()
     wifi = _line(output.out, "app-grounded-wifi-password")
     gym = _line(output.out, "app-ungrounded-gym")
-    assert "status=error" in wifi
+    assert "status=error" in wifi and "calls=1" in wifi
+    assert "token_source=unknown" in wifi
+    assert "prompt_tokens=unknown" in wifi
+    assert "prompt_tokens=0" not in wifi
     assert "通过" not in wifi.split("status=error", maxsplit=1)[0]
     assert "应用评测爆炸" in wifi
     assert "status=pass" in gym and "calls=0" in gym
+    assert "token_source=estimated" in gym and "prompt_tokens=0" in gym
     assert "Traceback" not in output.err
     assert "合计" in output.out and "错误 " in output.out
+
+
+def test_attempt_is_counted_before_complete_and_partial_tokens_stay_unknown(app_eval) -> None:
+    import json
+
+    from ailab.evals import EvalCase
+
+    app_case = app_eval.AppCase(
+        case=EvalCase(
+            "late-step",
+            "agent",
+            "延迟退房 2 小时要多少钱？",
+            "tool",
+            tool_name="quote_late_checkout",
+            require=("60",),
+        ),
+        group="tool",
+        basis="两步里第二步失败。",
+    )
+    tool_call = json.dumps(
+        {"type": "tool_call", "name": "quote_late_checkout", "arguments": {"hours": 2}},
+        ensure_ascii=False,
+    )
+
+    class FirstFails:
+        def complete(self, messages, *, temperature: float = 0.0) -> Completion:
+            del messages, temperature
+            raise RuntimeError("首步失败")
+
+    first = app_eval.measure_case(app_case, FirstFails())
+    assert first.calls == 1
+    assert first.status == "error"
+    assert first.token_source == "unknown"
+    first_line = _line(app_eval.format_report([first]), "late-step")
+    assert "calls=1" in first_line and "prompt_tokens=unknown" in first_line
+    assert "prompt_tokens=0" not in first_line
+
+    class SecondFails:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, messages, *, temperature: float = 0.0) -> Completion:
+            del messages, temperature
+            self.calls += 1
+            if self.calls == 1:
+                return Completion(text=tool_call, model="stub", prompt_tokens=11, completion_tokens=22)
+            raise RuntimeError("第二步失败")
+
+    second_client = SecondFails()
+    second = app_eval.measure_case(app_case, second_client)
+    assert second_client.calls == 2
+    assert second.calls == 2
+    assert second.status == "error"
+    assert second.token_source == "unknown"
+    second_line = _line(app_eval.format_report([second]), "late-step")
+    assert "calls=2" in second_line
+    assert "prompt_tokens=unknown" in second_line
+    assert "completion_tokens=unknown" in second_line
+    assert "prompt_tokens=11" not in second_line
+    assert "completion_tokens=22" not in second_line
+
+
+def test_report_redacts_sk_only_marker(app_eval, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    marker = "sk-" + "only-rule-one"
+    rows = json.loads(CASES.read_text(encoding="utf-8"))
+    assert len(rows) >= 12
+    rows[0]["basis"] = rows[0]["basis"] + " " + marker
+    rows[0]["id"] = marker
+    scored = {"n": 0}
+    real = app_eval.run_eval
+
+    def counting(cases, *, client=None):
+        scored["n"] += 1
+        return real(cases, client=client)
+
+    monkeypatch.setattr(app_eval, "run_eval", counting)
+    code = app_eval.main(["--cases", str(_write(tmp_path / "report.json", rows))])
+    printed = capsys.readouterr()
+    assert code == 1
+    assert scored["n"] == len(rows)
+    assert marker not in printed.out
+    assert marker not in printed.err
+    assert "[redacted]" in printed.out
+    assert "Bear" + "er " not in printed.out
+    blocked = {"n": 0}
+
+    def forbid(cases, *, client=None):
+        del cases, client
+        blocked["n"] += 1
+        raise AssertionError("集合错误不应评分")
+
+    monkeypatch.setattr(app_eval, "run_eval", forbid)
+    dup_id = marker
+    payload = rows[1:] + [_row("pad-a"), _row("pad-b")]
+    payload.append(_row(dup_id))
+    payload.append(_row(dup_id, question="另一句重复"))
+    assert len([row for row in payload if row["id"] != dup_id]) >= 12
+    assert app_eval.main(["--cases", str(_write(tmp_path / "dup.json", payload))]) == 2
+    failed = capsys.readouterr()
+    assert blocked["n"] == 0
+    assert dup_id not in failed.out
+    assert dup_id not in failed.err
+    assert "[redacted]" in failed.out
+    assert "重复 id" in failed.out
+    assert "至少 12" not in failed.out
+    assert "Traceback" not in failed.err
+
+
+def test_report_redacts_bearer_only_marker(app_eval, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    marker = "Bear" + "er " + "only-rule-two"
+    rows = json.loads(CASES.read_text(encoding="utf-8"))
+    assert len(rows) >= 12
+    rows[1]["basis"] = marker
+    scored = {"n": 0}
+    real = app_eval.run_eval
+
+    def counting(cases, *, client=None):
+        scored["n"] += 1
+        return real(cases, client=client)
+
+    monkeypatch.setattr(app_eval, "run_eval", counting)
+    assert app_eval.main(["--cases", str(_write(tmp_path / "report.json", rows))]) == 1
+    printed = capsys.readouterr()
+    assert scored["n"] == len(rows)
+    assert marker not in printed.out
+    assert marker not in printed.err
+    assert "only-rule-two" not in printed.out
+    assert "[redacted]" in printed.out
+    assert "sk-" not in printed.out
+    blocked = {"n": 0}
+
+    def forbid(cases, *, client=None):
+        del cases, client
+        blocked["n"] += 1
+        raise AssertionError("集合错误不应评分")
+
+    monkeypatch.setattr(app_eval, "run_eval", forbid)
+    payload = list(rows)
+    payload.append(_row(marker))
+    payload.append(_row(marker, question="另一句重复"))
+    assert app_eval.main(["--cases", str(_write(tmp_path / "dup.json", payload))]) == 2
+    failed = capsys.readouterr()
+    assert blocked["n"] == 0
+    assert marker not in failed.out
+    assert marker not in failed.err
+    assert "only-rule-two" not in failed.out
+    assert "[redacted]" in failed.out
+    assert "至少 12" not in failed.out
+    assert "Traceback" not in failed.err
+
+
+def test_non_string_fields_and_bad_encoding_exit_2_without_scoring(
+    app_eval, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    base = json.loads(CASES.read_text(encoding="utf-8"))
+    assert len(base) >= 12
+    scored = {"n": 0}
+
+    def forbid(cases, *, client=None):
+        del cases, client
+        scored["n"] += 1
+        raise AssertionError("类型错误不应评分")
+
+    monkeypatch.setattr(app_eval, "run_eval", forbid)
+    samples = [
+        ("refuse-number", _row("refuse-number", expect="refuse", source_id=123)),
+        ("cite-list", _row("cite-list", tool_name=[])),
+        ("no-tool-object", _row("no-tool-object", kind="agent", expect="no_tool", source_id="", tool_name={})),
+    ]
+    for name, bad in samples:
+        scored["n"] = 0
+        path = _write(tmp_path / f"{name}.json", [*base, bad])
+        assert app_eval.main(["--cases", str(path)]) == 2
+        printed = capsys.readouterr()
+        assert scored["n"] == 0
+        assert "必须是字符串" in printed.out
+        assert "至少 12" not in printed.out
+        assert "status=" not in printed.out
+        assert "Traceback" not in printed.err
+
+    raw = tmp_path / "bad-encoding.json"
+    raw.write_bytes(b"\xff\xfe not utf8")
+    scored["n"] = 0
+    assert app_eval.main(["--cases", str(raw)]) == 2
+    printed = capsys.readouterr()
+    assert scored["n"] == 0
+    assert "不是 UTF-8" in printed.out
+    assert "Traceback" not in printed.err
+    assert printed.err == ""
 
 
 def test_invalid_file_exits_2_before_scoring(app_eval, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
