@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from ailab.agent import AgentResult, run_agent
-from ailab.client import MockChatClient
+from ailab.client import ChatClient, MockChatClient
 from ailab.corpus import read_json
 from ailab.rag import REFUSAL, RagAnswer, RagPipeline, build_lab_rag
 from ailab.tools import hotel_tools
@@ -59,13 +59,19 @@ def load_cases() -> list[EvalCase]:
     return cases
 
 
-def run_eval(cases: list[EvalCase] | None = None) -> EvalReport:
+def run_eval(cases: list[EvalCase] | None = None, *, client: ChatClient | None = None) -> EvalReport:
+    """默认用 Mock，和第 08 课一样。传入 ``client`` 时，两路的 ``complete`` 都换成这一个。
+
+    第 15 课的真实对照才传入真实客户端。不传时，检索和工具仍各用一个新的 Mock。
+    """
+
     cases = load_cases() if cases is None else cases
-    rag = build_lab_rag()
     tools = hotel_tools()
+    rag = build_lab_rag() if client is None else build_lab_rag(client)
 
     def run_question(question: str) -> AgentResult:
-        return run_agent(MockChatClient(), tools, question, max_steps=4)
+        chat = MockChatClient() if client is None else client
+        return run_agent(chat, tools, question, max_steps=4)
 
     checks = [_grade(case, rag, run_question) for case in cases]
     return EvalReport(checks)
