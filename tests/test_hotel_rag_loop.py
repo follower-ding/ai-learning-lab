@@ -565,6 +565,197 @@ def _split_eval(output: str) -> tuple[dict[str, str], dict[str, str]]:
     return report, traces
 
 
+def test_live_cli_redacts_init_close_body_and_exception_chains(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """初始化、运行、关闭，以及 cause / context / 附注，都不能把假标记打到标准输出或标准错误。"""
+
+    from ailab.errors import ConfigError
+    from ailab.evals import EvalCase, run_eval
+
+    init_cause = "sk-" + "init-cause"
+    config_marker = "sk-" + "config-init"
+    close_note = "sk-" + "close-note"
+    body_marker = "sk-" + "body-outer"
+    close_cause = "sk-" + "close-cause"
+    offline_marker = "sk-" + "offline-context"
+    library_marker = "sk-" + "library-still-raises"
+
+    _forbid_http(monkeypatch)
+    demo = _load("hotel_rag_demo_lifecycle", DEMO)
+    import loop
+
+    def hidden(captured, *markers: str) -> None:
+        blob = captured.out + captured.err
+        for marker in markers:
+            assert marker not in blob
+        assert "Traceback" not in captured.err
+        _assert_clean(captured.out)
+        _assert_clean(captured.err)
+
+    def init_boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("初始化失败") from RuntimeError(init_cause)
+
+    monkeypatch.setattr(loop, "live_client_from_env", init_boom)
+    assert demo.main(["--live"]) == 0
+    printed = capsys.readouterr()
+    assert "真实接口没有开始：" in printed.out
+    assert "初始化失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "这次没有调用网络" in printed.out
+    assert "没有真实接口的结果" in printed.out
+    assert "[redacted]" in printed.out
+    assert "faq-checkin" not in printed.out
+    hidden(printed, init_cause)
+
+    def config_boom(*_args: object, **_kwargs: object) -> None:
+        raise ConfigError("配置失败 " + config_marker)
+
+    monkeypatch.setattr(loop, "live_client_from_env", config_boom)
+    assert loop.run_live_or_mock(True, lambda _client: 0) == 0
+    printed = capsys.readouterr()
+    assert "真实接口没有开始：" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, config_marker)
+
+    class NoteClose:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            err = RuntimeError("关闭失败")
+            err.add_note(close_note)
+            raise err
+
+    holder: dict[str, NoteClose] = {}
+
+    def note_factory(*_args: object, **_kwargs: object) -> NoteClose:
+        holder["client"] = NoteClose()
+        return holder["client"]
+
+    monkeypatch.setattr(loop, "live_client_from_env", note_factory)
+    ran = {"body": False}
+
+    def ok_body(_client: object) -> int:
+        ran["body"] = True
+        return 0
+
+    assert loop.run_live_or_mock(True, ok_body) == 0
+    assert ran["body"] is True
+    assert holder["client"].closed is True
+    printed = capsys.readouterr()
+    assert "真实接口没有完成：" in printed.out
+    assert "关闭失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, close_note)
+
+    class CauseClose:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("关闭失败") from RuntimeError(close_cause)
+
+    both: dict[str, CauseClose] = {}
+
+    def both_factory(*_args: object, **_kwargs: object) -> CauseClose:
+        both["client"] = CauseClose()
+        return both["client"]
+
+    monkeypatch.setattr(loop, "live_client_from_env", both_factory)
+
+    def bad_body(_client: object) -> int:
+        try:
+            raise RuntimeError(body_marker)
+        except RuntimeError as exc:
+            raise RuntimeError("运行失败") from exc
+
+    assert loop.run_live_or_mock(True, bad_body) == 0
+    assert both["client"].closed is True
+    printed = capsys.readouterr()
+    assert printed.out.count("真实接口没有完成：") == 2
+    assert "运行失败" in printed.out
+    assert "关闭失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, body_marker, close_cause)
+
+    def offline_body(_client: object) -> int:
+        try:
+            raise RuntimeError(offline_marker)
+        except RuntimeError:
+            raise RuntimeError("离线外壳")
+
+    assert loop.run_live_or_mock(False, offline_body) == 1
+    printed = capsys.readouterr()
+    assert "没有完成：" in printed.out
+    assert "离线外壳" in printed.out
+    assert "没有补写结果" not in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, offline_marker)
+
+    class Boom:
+        def complete(self, messages: object, *, temperature: float = 0.0) -> Completion:
+            del messages, temperature
+            raise RuntimeError(library_marker)
+
+    with pytest.raises(RuntimeError) as caught:
+        run_eval([EvalCase("x", "agent", "取消政策是什么？", "no_tool")], client=Boom())
+    assert library_marker in str(caught.value)
+
+
+def test_each_redact_rule_covers_tool_arguments_without_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sk_only = "sk-" + "rule-one-only"
+    bearer_only = "Bear" + "er " + "rule-two-only"
+    _forbid_http(monkeypatch)
+    _load("hotel_rag_ask_rules", ASK)
+    import loop
+
+    _forbid_live_lookup(monkeypatch)
+
+    def ask_with(note: str):
+        client = _ScriptedClient(
+            [
+                {
+                    "type": "tool_call",
+                    "name": "not-a-tool",
+                    "arguments": {"note": note},
+                }
+            ]
+        )
+        code = loop.run_live_or_mock(
+            False,
+            lambda _client: loop.run_ask("取消政策是什么？", "agent", client, None),
+        )
+        assert code == 0
+        assert client.calls == 1
+        return capsys.readouterr()
+
+    sk_out = ask_with(sk_only)
+    assert sk_only not in sk_out.out
+    assert "rule-one-only" not in sk_out.out
+    assert "[redacted]" in sk_out.out
+    assert "参数" in sk_out.out
+    _assert_clean(sk_out.out)
+    _assert_clean(sk_out.err)
+
+    bearer_out = ask_with(bearer_only)
+    assert bearer_only not in bearer_out.out
+    assert "rule-two-only" not in bearer_out.out
+    assert "[redacted]" in bearer_out.out
+    assert "参数" in bearer_out.out
+    _assert_clean(bearer_out.out)
+    _assert_clean(bearer_out.err)
+
+
 def test_new_files_have_no_secrets() -> None:
     pattern = re.compile(r"sk-[A-Za-z0-9_\-]+")
     roots = [APP, ROOT / "tests" / "test_hotel_rag_loop.py", ROOT / "Makefile"]

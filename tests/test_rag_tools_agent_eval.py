@@ -155,19 +155,41 @@ def test_shipped_eval_set_passes_and_a_wrong_expect_fails() -> None:
     assert broken.checks[0].passed is False
 
 
-def test_observe_is_optional_and_sees_the_graded_outcome() -> None:
+def test_observe_is_optional_and_sees_the_graded_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ailab.evals as evals
+
     baseline = run_eval()
-    seen: list[tuple[str, object]] = []
+    untouched = run_eval(observe=lambda _case, _outcome: None)
+    assert [check.detail for check in untouched.checks] == [check.detail for check in baseline.checks]
+    assert [check.passed for check in untouched.checks] == [check.passed for check in baseline.checks]
 
-    def observe(case, outcome) -> None:
-        seen.append((case.id, outcome))
+    cases = load_cases()
+    assert {case.kind for case in cases} == {"rag", "agent"}
+    graded: list[tuple[EvalCase, object]] = []
+    real_rag = evals._grade_rag
+    real_agent = evals._grade_agent
 
-    hooked = run_eval(observe=observe)
-    assert [check.detail for check in hooked.checks] == [check.detail for check in baseline.checks]
-    assert [check.passed for check in hooked.checks] == [check.passed for check in baseline.checks]
-    assert [case_id for case_id, _outcome in seen] == [case.id for case in load_cases()]
-    for check, (_case_id, outcome) in zip(hooked.checks, seen, strict=True):
-        if hasattr(outcome, "reason"):
+    def wrap_rag(case, result):
+        graded.append((case, result))
+        return real_rag(case, result)
+
+    def wrap_agent(case, result):
+        graded.append((case, result))
+        return real_agent(case, result)
+
+    monkeypatch.setattr(evals, "_grade_rag", wrap_rag)
+    monkeypatch.setattr(evals, "_grade_agent", wrap_agent)
+    seen: list[tuple[EvalCase, object]] = []
+    report = run_eval(cases, observe=lambda case, outcome: seen.append((case, outcome)))
+
+    assert len(seen) == len(graded) == len(cases) == len(report.checks)
+    for case, (seen_case, outcome), (graded_case, graded_result), check in zip(
+        cases, seen, graded, report.checks, strict=True
+    ):
+        assert seen_case is case
+        assert graded_case is case
+        assert outcome is graded_result
+        if case.kind == "rag":
             assert f"reason={outcome.reason}" in check.detail
             cited = ",".join(outcome.citations) or "-"
             assert f"citations={cited}" in check.detail

@@ -56,8 +56,9 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 def run_live_or_mock(live: bool, body: Callable[[OpenAICompatibleClient | None], int]) -> int:
     """默认把 None 交给 body，由 body 走 Mock。``live`` 为真时才读环境。
 
-    这里打印的异常只留脱敏后的文本，不把原始 traceback 打到标准错误。
-    离线因此以退出码 1 结束。真实接口仍不把这次失败记成已通过，退出码保持 0。
+    入口接住初始化、运行和关闭这三段里的异常，只打印脱敏文本，不把 traceback 打到标准错误。
+    离线运行失败的退出码是 1。``--live`` 的失败退出码是 0，并写明没有补写结果。
+    没有密钥仍是跳过，退出码 0。直接调用库函数时，异常照旧抛出。
     """
 
     if not live:
@@ -68,21 +69,31 @@ def run_live_or_mock(live: bool, body: Callable[[OpenAICompatibleClient | None],
             return 1
     try:
         client = live_client_from_env()
-    except ConfigError as exc:
-        print(f"真实接口没有开始：{redact(str(exc))}")
+    except Exception as exc:
+        _print_failure("真实接口没有开始：", exc)
+        _print_live_stopped()
         print("这次没有调用网络，也没有真实接口的结果。")
         return 0
     if client is None:
         _print_skip()
         return 0
+    body_error: Exception | None = None
+    close_error: Exception | None = None
     try:
         body(client)
     except Exception as exc:
-        _print_failure("真实接口没有完成：", exc)
-        print("没有补写结果。")
-        return 0
-    finally:
+        body_error = exc
+    try:
         client.close()
+    except Exception as exc:
+        close_error = exc
+    if body_error is None and close_error is None:
+        return 0
+    if body_error is not None:
+        _print_failure("真实接口没有完成：", body_error)
+    if close_error is not None:
+        _print_failure("真实接口没有完成：", close_error)
+    _print_live_stopped()
     return 0
 
 
@@ -142,6 +153,8 @@ def run_recorded_eval(client: OpenAICompatibleClient | None, trace_dir: Path | N
         report = run_eval(client=client, observe=observe)
     print(redact(format_report(report)))
     print()
+    # 当前 9 条用例的 id 都不重复，所以可以按 id 对上同一次作答。
+    # 两条若共用一个 id，这里只会留下后写入的那条；这一层不支持重复 id。
     found = {case.id: (case, outcome) for case, outcome in captured}
     for case in load_cases():
         print(f"追踪 {case.id}")
@@ -241,7 +254,32 @@ def _print_steps(result: AgentResult) -> None:
 
 
 def _print_failure(prefix: str, exc: BaseException) -> None:
-    print(f"{prefix}{redact(str(exc))}")
+    print(f"{prefix}{redact(_exception_text(exc))}")
+
+
+def _print_live_stopped() -> None:
+    print("没有补写结果。")
+
+
+def _exception_text(exc: BaseException) -> str:
+    """异常自己的文本、附注，以及 cause / context 链。交给 redact 之前先拼成一段。"""
+
+    lines: list[str] = []
+    seen: set[int] = set()
+
+    def walk(current: BaseException | None) -> None:
+        if current is None or id(current) in seen:
+            return
+        seen.add(id(current))
+        lines.append(str(current))
+        for note in getattr(current, "__notes__", ()) or ():
+            lines.append(str(note))
+        walk(current.__cause__)
+        if not current.__suppress_context__:
+            walk(current.__context__)
+
+    walk(exc)
+    return "\n".join(lines)
 
 
 def _print_guest(text: str) -> None:
@@ -298,7 +336,7 @@ def _print_skip() -> None:
     try:
         timeout, max_tokens = read_chat_limits(os.environ)
     except ConfigError as exc:
-        print(f"没有 OPENAI_API_KEY，跳过真实接口。时限没有读成：{redact(str(exc))}")
+        print(f"没有 OPENAI_API_KEY，跳过真实接口。时限没有读成：{redact(_exception_text(exc))}")
         print("这次没有调用网络，也没有真实接口的结果。")
         return
     print(
