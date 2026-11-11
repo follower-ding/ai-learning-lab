@@ -30,6 +30,15 @@ python apps/hotel-rag/ask.py --agent "取消政策是什么？"
 
 离线时，演示应当走完四条并以退出码 0 结束。评测应当打印 `合计 9/9`。
 
+应用评测是另一份题，不替代上面的 9 条：
+
+```bash
+python apps/hotel-rag/app_eval.py
+make hotel-rag-app
+```
+
+`make hotel-rag-app` 也没有接进 `make lessons`。它没有 `--live`，不访问网络，也不打六字段追踪。
+
 要留下文件时加上 `--trace-dir`。追踪先出现在标准输出，文件是同一段已经脱敏的文字。不写这个参数就不会在磁盘上留副本。
 
 ```bash
@@ -44,6 +53,30 @@ python apps/hotel-rag/demo.py --trace-dir /tmp/hotel-rag-traces
 2. 游泳池几点开放？检索没过线，拒绝原因是 `low_score`。客人看到的仍是那句固定拒绝。追踪的拒绝原因字段只写 `low_score`，不抄那句给客人的话。
 3. 延迟退房 3 小时要多少钱？调用 `quote_late_checkout`。回答里有 90。
 4. 取消政策是什么？调用 `lookup_policy`。回答里有 24。
+
+## 应用评测
+
+`app_cases.json` 是给这个入口用的题，至少 12 条，id 不能重复。题面来自现有规章和两只工具的边界，分成有据、无据、改写、工具边界。每条都有 `basis`，写明预期对应哪条资料或哪条工具规则。
+
+`app_eval.py` 对每一题调用一次现有的 `run_eval([case], client=meter)`。评分仍是原来的 `_grade`，这里不复制一套。`meter` 包住离线 Mock 的 `complete`，签名不变，返回原来的 Completion。`calls` 是尝试次数，进入调用之前加一。只有成功返回的整数 token 才累加。某次尝试没有返回时，整题标 `unknown`，不印数字，也不把中途小计当成完整用量。耗时只包住这一次 `run_eval`。
+
+低分拒绝不会调用模型，`calls=0` 且 token 为 0、`token_source=estimated`。这是 Mock 没被调用，不是供应商 usage 的 0。工具要先调用再回答时，同一次里成功返回的多步 token 加在一起。某一题抛出异常时，这一行记成 `status=error`，不算通过。
+
+Mock 的 token 来自 `estimate_tokens`，报告里标 `token_source=estimated`。这不是供应商 usage，也不是账单。现有 Completion 证明不了真实用量；字段不是整数，或客户端不是这个 Mock 时，标 `token_source=unknown`，并且不把数字印出来。
+
+这不是语义检索的生产效果，也不是把所有秘密都滤掉的过滤器。报告和用例集错误会走现有的 `redact`，它仍然只有原来的两种样式。
+
+字面向量对不上的改写，预期仍按关联写。对不上就在报告里记失败，不把预期改成拒绝来凑全过。`app-paraphrase-floor` 只检查会不会引用停车资料，正文并没有写车位楼层，引用成功也不证明楼层。
+
+退出码：
+
+- 0：全部通过。
+- 1：有失败或错误。失败的题照实列在报告里。当前这套字面向量下，`app-paraphrase-floor` 和 `app-paraphrase-wifi-name` 会失败，所以直接运行脚本时退出码是 1。
+- 2：用例集不合法（重复 id、kind 和 expect 不配、require 与 forbid 重叠等）。还没有开始评分。
+
+`make hotel-rag-app` 只是调用这个脚本。脚本返回 1 时，make 按自己的惯例以 2 结束。make 的 2 不是「用例集不合法」；要看脚本打印的合计。
+
+课程用的 `eval_cases.json` 仍是原来的 9 条。`DEFAULT_MIN_SCORE` 和 `run_eval()` 不传客户端时的行为都不改。
 
 ## 评测
 
