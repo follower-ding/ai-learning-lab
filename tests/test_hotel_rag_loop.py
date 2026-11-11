@@ -1,6 +1,7 @@
 """演示和评测入口：默认离线，没有密钥不构造 HTTP 客户端。"""
 
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -9,6 +10,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+from ailab.errors import LabError
+from ailab.messages import Completion
+from ailab.tools import Tool
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "hotel-rag"
@@ -335,20 +340,420 @@ def test_layer_does_not_retarget_library_defaults() -> None:
         assert name not in joined
     loop_text = next(text for path, text in sources if path.name == "loop.py")
     assert "run_eval()" in loop_text
-    assert "run_eval(client=client)" in loop_text
+    assert "run_eval(observe=observe)" in loop_text
+    assert "run_eval(client=client, observe=observe)" in loop_text
     assert "live_client_from_env(" in loop_text
     assert "build_lab_rag" in loop_text
     assert not list((ROOT / "lessons").glob("16-*"))
 
     demo = _load("hotel_rag_demo_cases", DEMO)
     del demo
+    import inspect
+
     import loop
+
+    recorded = inspect.getsource(loop.run_recorded_eval)
+    assert "rag.answer" not in recorded
+    assert "_run_tool" not in recorded
+    assert "trace_rag" in recorded
+    assert "trace_agent" in recorded
 
     cases = {case.id: case for case in load_cases()}
     assert len(cases) == 9
     for demo_case in loop.DEMO_CASES:
         assert cases[demo_case.id].question == demo_case.question
         assert cases[demo_case.id].kind == demo_case.kind
+
+
+def test_eval_score_and_trace_come_from_one_nondeterministic_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """第二次开口会换成另一种回答。评分和追踪若不是同一次，字段会对不上，调用次数也会变多。"""
+
+    from ailab.evals import load_cases
+
+    _forbid_http(monkeypatch)
+    _load("hotel_rag_eval_once", EVAL)
+    import loop
+
+    client = _DriftingClient()
+    assert loop.run_recorded_eval(client, None) == 0
+    output = capsys.readouterr().out
+    report, traces = _split_eval(output)
+    cases = load_cases()
+    rag_model = [case for case in cases if case.kind == "rag" and case.expect != "refuse"]
+    agents = [case for case in cases if case.kind == "agent"]
+    refused = [case for case in cases if case.expect == "refuse"]
+    expected = {("rag", case.question) for case in rag_model} | {("agent", case.question) for case in agents}
+
+    assert client.calls == len(expected)
+    assert set(client.starts) == expected
+    assert set(client.starts.values()) == {1}
+    for case in rag_model:
+        assert "reason=missing_citation" in report[case.id]
+        assert "拒绝原因：missing_citation" in traces[case.id]
+        assert "停止原因：missing_citation" in traces[case.id]
+    for case in agents:
+        assert "stop=final" in report[case.id]
+        assert "tools=-" in report[case.id]
+        assert "工具名：（无）" in traces[case.id]
+        assert "停止原因：final" in traces[case.id]
+        assert "lookup_policy" not in traces[case.id]
+    for case in refused:
+        assert "reason=low_score" in report[case.id]
+        assert "拒绝原因：low_score" in traces[case.id]
+        assert ("rag", case.question) not in client.starts
+    assert "合计 " in output
+    _assert_clean(output)
+
+
+def test_malicious_arguments_are_redacted_on_stdout_trace_and_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    marker = "sk-" + "hotelrag-fake"
+    leaked = "Bear" + "er " + marker
+    arguments = {"topic": marker, "note": leaked}
+
+    _forbid_http(monkeypatch)
+    _load("hotel_rag_ask_redact", ASK)
+    import loop
+
+    _forbid_live_lookup(monkeypatch)
+    secret_call = _ScriptedClient(
+        [
+            {
+                "type": "tool_call",
+                "name": marker,
+                "arguments": arguments,
+            }
+        ]
+    )
+    trace_dir = tmp_path / "ask"
+    code = loop.run_live_or_mock(
+        False,
+        lambda _client: loop.run_ask("取消政策是什么？", "agent", secret_call, trace_dir),
+    )
+    assert code == 0
+    assert secret_call.calls == 1
+    printed = capsys.readouterr()
+    stored = (trace_dir / "ask.txt").read_text(encoding="utf-8")
+    assert marker not in printed.out
+    assert marker not in printed.err
+    assert marker not in stored
+    assert "[redacted]" in printed.out
+    assert "工具名：[redacted]" in stored
+    assert "参数" in printed.out
+    _assert_clean(printed.out)
+    _assert_clean(printed.err)
+    _assert_clean(stored)
+
+    def explode(arguments: dict) -> str:
+        raise LabError("参数错误 " + str(dict(arguments)))
+
+    def fake_tools() -> dict[str, Tool]:
+        return {
+            "lookup_policy": Tool("lookup_policy", "读取规章", explode),
+            "quote_late_checkout": Tool("quote_late_checkout", "报价", explode),
+        }
+
+    monkeypatch.setattr(loop, "hotel_tools", fake_tools)
+    failing = _ScriptedClient(
+        [
+            {
+                "type": "tool_call",
+                "name": "lookup_policy",
+                "arguments": arguments,
+            }
+        ]
+    )
+    failed_dir = tmp_path / "failed"
+    code = loop.run_live_or_mock(
+        False,
+        lambda _client: loop.run_ask("取消政策是什么？", "agent", failing, failed_dir),
+    )
+    assert code == 1
+    assert failing.calls == 1
+    failed = capsys.readouterr()
+    assert "没有完成：" in failed.out
+    assert "[redacted]" in failed.out
+    assert marker not in failed.out
+    assert marker not in failed.err
+    assert not failed_dir.exists()
+    _assert_clean(failed.out)
+    _assert_clean(failed.err)
+
+
+class _DriftingClient:
+    """第一次开口不引用、不调用工具。若再开口，检索会补上引用，工具循环会去查取消政策。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.starts: dict[tuple[str, str], int] = {}
+        self.timeout = 30
+        self.max_tokens = 400
+
+    def complete(self, messages, *, temperature: float = 0.0) -> Completion:
+        del temperature
+        self.calls += 1
+        system = "\n".join(message.content for message in messages if message.role == "system")
+        if "【工具协议】" in system:
+            channel = "agent"
+        elif "【检索资料】" in system:
+            channel = "rag"
+        else:
+            channel = "other"
+        question = next((message.content for message in messages if message.role == "user"), "")
+        opening = not any(message.role == "assistant" for message in messages)
+        key = (channel, question)
+        if opening:
+            phase = self.starts.get(key, 0) + 1
+            self.starts[key] = phase
+        else:
+            phase = self.starts.get(key, 1)
+        if channel == "agent":
+            if phase == 1 and opening:
+                text = json.dumps({"type": "final", "answer": "第一次不调用工具"}, ensure_ascii=False)
+            elif opening:
+                text = json.dumps(
+                    {
+                        "type": "tool_call",
+                        "name": "lookup_policy",
+                        "arguments": {"topic": "cancel"},
+                    },
+                    ensure_ascii=False,
+                )
+            else:
+                text = json.dumps({"type": "final", "answer": "第二次才调用工具"}, ensure_ascii=False)
+        elif phase == 1:
+            text = "第一次没有引用。"
+        else:
+            text = "第二次补上引用。[faq-checkin]"
+        return Completion(text=text, model="drift", prompt_tokens=1, completion_tokens=1)
+
+
+class _ScriptedClient:
+    def __init__(self, payloads: list[dict]) -> None:
+        self._payloads = list(payloads)
+        self.calls = 0
+        self.timeout = 30
+        self.max_tokens = 400
+
+    def complete(self, messages, *, temperature: float = 0.0) -> Completion:
+        del messages, temperature
+        self.calls += 1
+        payload = self._payloads.pop(0) if self._payloads else {"type": "final", "answer": "没有更多脚本"}
+        return Completion(
+            text=json.dumps(payload, ensure_ascii=False),
+            model="script",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+
+
+def _split_eval(output: str) -> tuple[dict[str, str], dict[str, str]]:
+    head, *parts = output.split("追踪 ")
+    report: dict[str, str] = {}
+    for line in head.splitlines():
+        if "  通过  " not in line and "  失败  " not in line:
+            continue
+        case_id, rest = line.split("  ", maxsplit=1)
+        report[case_id] = rest
+    traces = {part.splitlines()[0]: part for part in parts}
+    return report, traces
+
+
+def test_live_cli_redacts_init_close_body_and_exception_chains(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """初始化、运行、关闭，以及 cause / context / 附注，都不能把假标记打到标准输出或标准错误。"""
+
+    from ailab.errors import ConfigError
+    from ailab.evals import EvalCase, run_eval
+
+    init_cause = "sk-" + "init-cause"
+    config_marker = "sk-" + "config-init"
+    close_note = "sk-" + "close-note"
+    body_marker = "sk-" + "body-outer"
+    close_cause = "sk-" + "close-cause"
+    offline_marker = "sk-" + "offline-context"
+    library_marker = "sk-" + "library-still-raises"
+
+    _forbid_http(monkeypatch)
+    demo = _load("hotel_rag_demo_lifecycle", DEMO)
+    import loop
+
+    def hidden(captured, *markers: str) -> None:
+        blob = captured.out + captured.err
+        for marker in markers:
+            assert marker not in blob
+        assert "Traceback" not in captured.err
+        _assert_clean(captured.out)
+        _assert_clean(captured.err)
+
+    def init_boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("初始化失败") from RuntimeError(init_cause)
+
+    monkeypatch.setattr(loop, "live_client_from_env", init_boom)
+    assert demo.main(["--live"]) == 0
+    printed = capsys.readouterr()
+    assert "真实接口没有开始：" in printed.out
+    assert "初始化失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "这次没有调用网络" in printed.out
+    assert "没有真实接口的结果" in printed.out
+    assert "[redacted]" in printed.out
+    assert "faq-checkin" not in printed.out
+    hidden(printed, init_cause)
+
+    def config_boom(*_args: object, **_kwargs: object) -> None:
+        raise ConfigError("配置失败 " + config_marker)
+
+    monkeypatch.setattr(loop, "live_client_from_env", config_boom)
+    assert loop.run_live_or_mock(True, lambda _client: 0) == 0
+    printed = capsys.readouterr()
+    assert "真实接口没有开始：" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, config_marker)
+
+    class NoteClose:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            err = RuntimeError("关闭失败")
+            err.add_note(close_note)
+            raise err
+
+    holder: dict[str, NoteClose] = {}
+
+    def note_factory(*_args: object, **_kwargs: object) -> NoteClose:
+        holder["client"] = NoteClose()
+        return holder["client"]
+
+    monkeypatch.setattr(loop, "live_client_from_env", note_factory)
+    ran = {"body": False}
+
+    def ok_body(_client: object) -> int:
+        ran["body"] = True
+        return 0
+
+    assert loop.run_live_or_mock(True, ok_body) == 0
+    assert ran["body"] is True
+    assert holder["client"].closed is True
+    printed = capsys.readouterr()
+    assert "真实接口没有完成：" in printed.out
+    assert "关闭失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, close_note)
+
+    class CauseClose:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("关闭失败") from RuntimeError(close_cause)
+
+    both: dict[str, CauseClose] = {}
+
+    def both_factory(*_args: object, **_kwargs: object) -> CauseClose:
+        both["client"] = CauseClose()
+        return both["client"]
+
+    monkeypatch.setattr(loop, "live_client_from_env", both_factory)
+
+    def bad_body(_client: object) -> int:
+        try:
+            raise RuntimeError(body_marker)
+        except RuntimeError as exc:
+            raise RuntimeError("运行失败") from exc
+
+    assert loop.run_live_or_mock(True, bad_body) == 0
+    assert both["client"].closed is True
+    printed = capsys.readouterr()
+    assert printed.out.count("真实接口没有完成：") == 2
+    assert "运行失败" in printed.out
+    assert "关闭失败" in printed.out
+    assert "没有补写结果。" in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, body_marker, close_cause)
+
+    def offline_body(_client: object) -> int:
+        try:
+            raise RuntimeError(offline_marker)
+        except RuntimeError:
+            raise RuntimeError("离线外壳")
+
+    assert loop.run_live_or_mock(False, offline_body) == 1
+    printed = capsys.readouterr()
+    assert "没有完成：" in printed.out
+    assert "离线外壳" in printed.out
+    assert "没有补写结果" not in printed.out
+    assert "[redacted]" in printed.out
+    hidden(printed, offline_marker)
+
+    class Boom:
+        def complete(self, messages: object, *, temperature: float = 0.0) -> Completion:
+            del messages, temperature
+            raise RuntimeError(library_marker)
+
+    with pytest.raises(RuntimeError) as caught:
+        run_eval([EvalCase("x", "agent", "取消政策是什么？", "no_tool")], client=Boom())
+    assert library_marker in str(caught.value)
+
+
+def test_each_redact_rule_covers_tool_arguments_without_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sk_only = "sk-" + "rule-one-only"
+    bearer_only = "Bear" + "er " + "rule-two-only"
+    _forbid_http(monkeypatch)
+    _load("hotel_rag_ask_rules", ASK)
+    import loop
+
+    _forbid_live_lookup(monkeypatch)
+
+    def ask_with(note: str):
+        client = _ScriptedClient(
+            [
+                {
+                    "type": "tool_call",
+                    "name": "not-a-tool",
+                    "arguments": {"note": note},
+                }
+            ]
+        )
+        code = loop.run_live_or_mock(
+            False,
+            lambda _client: loop.run_ask("取消政策是什么？", "agent", client, None),
+        )
+        assert code == 0
+        assert client.calls == 1
+        return capsys.readouterr()
+
+    sk_out = ask_with(sk_only)
+    assert sk_only not in sk_out.out
+    assert "rule-one-only" not in sk_out.out
+    assert "[redacted]" in sk_out.out
+    assert "参数" in sk_out.out
+    _assert_clean(sk_out.out)
+    _assert_clean(sk_out.err)
+
+    bearer_out = ask_with(bearer_only)
+    assert bearer_only not in bearer_out.out
+    assert "rule-two-only" not in bearer_out.out
+    assert "[redacted]" in bearer_out.out
+    assert "参数" in bearer_out.out
+    _assert_clean(bearer_out.out)
+    _assert_clean(bearer_out.err)
 
 
 def test_new_files_have_no_secrets() -> None:

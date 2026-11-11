@@ -1,4 +1,4 @@
-"""调用现有的 run_eval()，并为每一条附上追踪。默认离线 Mock。"""
+"""调用现有的 run_eval()，并用同一次作答附上追踪。默认离线 Mock。"""
 
 import argparse
 import sys
