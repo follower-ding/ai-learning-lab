@@ -1,5 +1,6 @@
 """很小的一组行为用例。评的是引用、拒绝和工具，不是模型排行榜。"""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ailab.agent import AgentResult, run_agent
@@ -59,10 +60,18 @@ def load_cases() -> list[EvalCase]:
     return cases
 
 
-def run_eval(cases: list[EvalCase] | None = None, *, client: ChatClient | None = None) -> EvalReport:
+def run_eval(
+    cases: list[EvalCase] | None = None,
+    *,
+    client: ChatClient | None = None,
+    observe: Callable[[EvalCase, RagAnswer | AgentResult], None] | None = None,
+) -> EvalReport:
     """默认用 Mock，和第 08 课一样。传入 ``client`` 时，两路的 ``complete`` 都换成这一个。
 
     第 15 课的真实对照才传入真实客户端。不传时，检索和工具仍各用一个新的 Mock。
+
+    ``observe`` 默认不传。传了以后，每条用例在评分算完时把刚刚用过的那个结果交回来，
+    不为此再调用一次模型或工具循环。不传时，评分、返回值和调用次数都和原来一样。
     """
 
     cases = load_cases() if cases is None else cases
@@ -73,7 +82,7 @@ def run_eval(cases: list[EvalCase] | None = None, *, client: ChatClient | None =
         chat = MockChatClient() if client is None else client
         return run_agent(chat, tools, question, max_steps=4)
 
-    checks = [_grade(case, rag, run_question) for case in cases]
+    checks = [_grade(case, rag, run_question, observe) for case in cases]
     return EvalReport(checks)
 
 
@@ -86,7 +95,7 @@ def format_report(report: EvalReport) -> str:
     return "\n".join(lines)
 
 
-def _grade(case: EvalCase, rag: RagPipeline, run_question) -> EvalCheck:
+def _grade(case: EvalCase, rag: RagPipeline, run_question, observe=None) -> EvalCheck:
     if case.kind == "rag":
         result = rag.answer(case.question)
         passed, detail = _grade_rag(case, result)
@@ -103,6 +112,8 @@ def _grade(case: EvalCase, rag: RagPipeline, run_question) -> EvalCheck:
     if any(piece not in text for piece in case.require):
         passed = False
         detail += " 缺少必要片段"
+    if observe is not None:
+        observe(case, result)
     return EvalCheck(case.id, passed, detail)
 
 

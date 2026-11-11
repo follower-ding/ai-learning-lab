@@ -15,8 +15,8 @@ from pathlib import Path
 
 from ailab.agent import AgentResult, run_agent
 from ailab.client import MockChatClient, OpenAICompatibleClient, live_client_from_env, read_chat_limits
-from ailab.errors import ConfigError, LabError
-from ailab.evals import format_report, load_cases, run_eval
+from ailab.errors import ConfigError
+from ailab.evals import EvalCase, format_report, load_cases, run_eval
 from ailab.rag import REFUSAL, RagAnswer, RagPipeline, build_lab_rag
 from ailab.redact import redact
 from ailab.tools import hotel_tools
@@ -54,10 +54,18 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def run_live_or_mock(live: bool, body: Callable[[OpenAICompatibleClient | None], int]) -> int:
-    """默认把 None 交给 body，由 body 走 Mock。``live`` 为真时才读环境。"""
+    """默认把 None 交给 body，由 body 走 Mock。``live`` 为真时才读环境。
+
+    这里打印的异常只留脱敏后的文本，不把原始 traceback 打到标准错误。
+    离线因此以退出码 1 结束。真实接口仍不把这次失败记成已通过，退出码保持 0。
+    """
 
     if not live:
-        return body(None)
+        try:
+            return body(None)
+        except Exception as exc:
+            _print_failure("没有完成：", exc)
+            return 1
     try:
         client = live_client_from_env()
     except ConfigError as exc:
@@ -69,8 +77,8 @@ def run_live_or_mock(live: bool, body: Callable[[OpenAICompatibleClient | None],
         return 0
     try:
         body(client)
-    except LabError as exc:
-        print(f"真实接口没有完成：{redact(str(exc))}")
+    except Exception as exc:
+        _print_failure("真实接口没有完成：", exc)
         print("没有补写结果。")
         return 0
     finally:
@@ -117,30 +125,38 @@ def run_demo(client: OpenAICompatibleClient | None, trace_dir: Path | None) -> i
 
 
 def run_recorded_eval(client: OpenAICompatibleClient | None, trace_dir: Path | None) -> int:
-    """先调用现有的 ``run_eval()``，再为每一条附上一张追踪。不改用例集。"""
+    """用现有的 ``run_eval()`` 评分，并把同一次作答交给现有的追踪。不改用例集。"""
+
+    captured: list[tuple[EvalCase, RagAnswer | AgentResult]] = []
+
+    def observe(case: EvalCase, outcome: RagAnswer | AgentResult) -> None:
+        captured.append((case, outcome))
 
     if client is None:
         print("岸港酒店评测")
         print("调用现有的 run_eval()，不传入客户端。这仍是第 08 课的 Mock。用例集不改。")
-        report = run_eval()
-        rag = build_lab_rag()
+        report = run_eval(observe=observe)
     else:
         print("岸港酒店评测")
         print(f"真实接口。超时 {client.timeout:g} 秒，max_tokens={client.max_tokens}。")
-        report = run_eval(client=client)
-        rag = build_lab_rag(client)
+        report = run_eval(client=client, observe=observe)
     print(redact(format_report(report)))
     print()
-    cases = load_cases()
-    tools = hotel_tools()
-    for case in cases:
+    found = {case.id: (case, outcome) for case, outcome in captured}
+    for case in load_cases():
         print(f"追踪 {case.id}")
-        if case.kind == "rag":
-            answer = rag.answer(case.question)
-            _emit(trace_rag(case.question, answer), trace_dir, case.id)
-        elif case.kind == "agent":
-            result = _run_tool(client, tools, case.question)
-            _emit(trace_agent(case.question, result), trace_dir, case.id)
+        graded = found.get(case.id)
+        if graded is None:
+            print(f"未知 kind：{case.kind}")
+            if client is None:
+                return 1
+            print()
+            continue
+        graded_case, outcome = graded
+        if isinstance(outcome, RagAnswer):
+            _emit(trace_rag(graded_case.question, outcome), trace_dir, case.id)
+        elif isinstance(outcome, AgentResult):
+            _emit(trace_agent(graded_case.question, outcome), trace_dir, case.id)
         else:
             print(f"未知 kind：{case.kind}")
             if client is None:
@@ -148,6 +164,7 @@ def run_recorded_eval(client: OpenAICompatibleClient | None, trace_dir: Path | N
         print()
     if client is not None:
         return 0
+    cases = load_cases()
     if len(cases) != report.total or report.passed != report.total:
         print("离线 Mock 应当全部通过。")
         return 1
@@ -213,13 +230,18 @@ def _print_steps(result: AgentResult) -> None:
         return
     for step in result.steps:
         if step.kind == "tool_call":
-            print(f"  第 {step.index + 1} 步 调用 {step.name} 参数 {step.arguments}")
+            # 工具名和参数来自模型输出，不能原样打出来。
+            print(redact(f"  第 {step.index + 1} 步 调用 {step.name} 参数 {step.arguments}"))
             if step.tool_result is None:
                 print("    结果：（无）")
             else:
                 print(f"    结果：{redact(step.tool_result)}")
         else:
-            print(f"  第 {step.index + 1} 步 {step.kind}")
+            print(f"  第 {step.index + 1} 步 {redact(step.kind)}")
+
+
+def _print_failure(prefix: str, exc: BaseException) -> None:
+    print(f"{prefix}{redact(str(exc))}")
 
 
 def _print_guest(text: str) -> None:

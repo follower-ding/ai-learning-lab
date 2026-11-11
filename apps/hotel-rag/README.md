@@ -7,7 +7,7 @@
 ## 这里有什么
 
 - `demo.py`：四条固定案例，一次跑完。每条先打印检索或工具过程，再打印给客人的回答，然后用 `emit_trace` 打出六个字段。
-- `eval.py`：调用现有的 `run_eval()`。不传客户端时仍是第 08 课的 Mock。报告用 `format_report`，再为每一条附上一张追踪。
+- `eval.py`：调用现有的 `run_eval()`。不传客户端时仍是第 08 课的 Mock。报告用 `format_report`。每一条追踪来自刚刚评分的那一次作答。
 - `ask.py`：只问一句。`--rag` 或 `--agent` 由你选，默认检索。这里不按问法自动分流。
 - `loop.py`：上面三个入口共用的过程打印、追踪和可选的 `--live`。
 
@@ -49,19 +49,19 @@ python apps/hotel-rag/demo.py --trace-dir /tmp/hotel-rag-traces
 
 `eval.py` 在离线时调用 `run_eval()`，不传入客户端。用例仍是 `eval_cases.json` 里原来的 9 条，这里不增删。
 
-追踪是同一条路径再走一次，用来把六个字段打出来。离线 Mock 两次结果相同。真实接口如果答得不稳定，报告和追踪可能不是同一次生成。
+`run_eval` 多了一个可选关键字 `observe`，默认不传。不传时，评分、返回值和模型调用次数都和原来一样。传了以后，每条用例评分一结束，就把刚刚用过的那个结果交回来。这里用现有的 `trace_rag` / `trace_agent` 打出六个字段，不再为了补追踪重新调用模型或工具循环。因此报告和追踪是同一次作答，即便客户端每次回答都不一样。
 
 ## 可选的真实接口
 
 加上 `--live` 时，只用 `live_client_from_env`。没有 `OPENAI_API_KEY` 就打印「跳过真实接口」，退出码为 0，不构造 HTTP 客户端，也不把 Mock 记成真实结果。
 
-超时和 `max_tokens` 与第 15 课相同：没写时是 30 秒和 400。报错文本走已有的 `redact`。这次对照不要求真实模型也得 9/9。
+超时和 `max_tokens` 与第 15 课相同：没写时是 30 秒和 400。标准输出、追踪文件和这个入口打印的异常都走已有的 `redact`，工具名和工具参数也走这一道。`redact` 的规则不改。这次对照不要求真实模型也得 9/9。入口捕获异常后只打印脱敏文本：离线退出码为 1，真实接口仍以退出码 0 结束，并且不补写结果。
 
 默认的 `python -m pytest` 不带 `--live` 去访问网络。没有密钥时，第 01 课那条标记为 integration 的测试仍会跳过。
 
 ## 这一层不改什么
 
-- 不改 `src/ailab` 的默认路径和函数签名。`RagPipeline.answer`、`run_agent` 的默认参数、不传客户端的 `run_eval()`、工具允许列表、`DEFAULT_MIN_SCORE` 都保持原样。
+- 不改默认路径。`RagPipeline.answer`、`run_agent` 的默认参数、不传客户端也不传 `observe` 的 `run_eval()`、工具允许列表、`DEFAULT_MIN_SCORE` 都保持原样。`run_eval` 只多了可选关键字 `observe`。
 - 不改 `hotel_faq.json`、`hotel_policy.md`、`eval_cases.json` 和 `redact`。
 - 检索仍用现有的字面向量（`build_lab_rag` 和现有的问答索引）。不读 `OPENAI_EMBEDDING_MODEL`。不把混合检索、重排序、流式输出或夹具注入变成这一层的默认路径。
 - 不改 `lessons/`，也不新增第 16 课。

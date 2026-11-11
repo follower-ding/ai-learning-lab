@@ -153,3 +153,25 @@ def test_shipped_eval_set_passes_and_a_wrong_expect_fails() -> None:
     broken = run_eval([EvalCase("bad", "rag", "游泳池几点开放？", "cite", source_id="faq-checkin")])
     assert broken.passed == 0
     assert broken.checks[0].passed is False
+
+
+def test_observe_is_optional_and_sees_the_graded_outcome() -> None:
+    baseline = run_eval()
+    seen: list[tuple[str, object]] = []
+
+    def observe(case, outcome) -> None:
+        seen.append((case.id, outcome))
+
+    hooked = run_eval(observe=observe)
+    assert [check.detail for check in hooked.checks] == [check.detail for check in baseline.checks]
+    assert [check.passed for check in hooked.checks] == [check.passed for check in baseline.checks]
+    assert [case_id for case_id, _outcome in seen] == [case.id for case in load_cases()]
+    for check, (_case_id, outcome) in zip(hooked.checks, seen, strict=True):
+        if hasattr(outcome, "reason"):
+            assert f"reason={outcome.reason}" in check.detail
+            cited = ",".join(outcome.citations) or "-"
+            assert f"citations={cited}" in check.detail
+        else:
+            names = [step.name for step in outcome.steps if step.name]
+            assert f"stop={outcome.stopped_reason}" in check.detail
+            assert f"tools={','.join(names) or '-'}" in check.detail
