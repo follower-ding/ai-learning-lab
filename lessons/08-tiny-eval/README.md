@@ -61,4 +61,4 @@ python lessons/08-tiny-eval/exercise.py
 
 [第 09 课：混合检索](../09-hybrid-retrieval/README.md)
 
-第 11 课到第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。
+第 12 课到第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。

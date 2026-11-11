@@ -82,4 +82,6 @@ python lessons/10-rerank/exercise.py
 
 ## 下一课
 
-[路线图](../../ROADMAP.md) 里的第 11 课到第 15 课还没有练习。
+[第 11 课：缺槽时先问](../11-clarify-missing-slot/README.md)
+
+第 12 课到第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。

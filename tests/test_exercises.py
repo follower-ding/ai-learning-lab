@@ -20,6 +20,7 @@ LESSONS = [
     "lessons/08-tiny-eval/exercise.py",
     "lessons/09-hybrid-retrieval/exercise.py",
     "lessons/10-rerank/exercise.py",
+    "lessons/11-clarify-missing-slot/exercise.py",
 ]
 
 

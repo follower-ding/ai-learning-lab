@@ -1,6 +1,6 @@
 # 后面的课
 
-01 到 10 已经有笔记、练习和离线测试。下面这些还没有 `exercise.py`。不要到仓库里找对应目录。
+01 到 11 已经有笔记、练习和离线测试。下面这些还没有 `exercise.py`。不要到仓库里找对应目录。
 
 做这些课之前，先让 `python -m pytest` 保持全绿。每一课只加一种机制，并给它至少一条能失败的用例。
 
@@ -20,9 +20,13 @@
 
 ## 11 缺槽时先问
 
-第 06 课没写小时数时，Mock 用 `final` 反问，不猜 1 小时。这一课把「反问」做成单独的一步，例如 `{"type":"clarify","question":"要延迟几小时？"}`。
+已有练习，见 [lessons/11-clarify-missing-slot](lessons/11-clarify-missing-slot/README.md)。
 
-评测要检查：缺小时数时没有调用 `quote_late_checkout`，也没有出现 30、60、90。
+第 06 课没写小时数时，Mock 用 `final` 反问，不猜 1 小时。这一课把「反问」做成单独的一步，例如 `{"type":"clarify","question":"要延迟几小时？"}`。`parse_action` 读出 `question`，`run_agent` 见到 `clarify` 就停，停止原因也是 `clarify`，不再把这句话当成已经答完。
+
+`ask_first=True` 时，系统提示里多一行【缺槽先问】。启发式 Mock 见到这个标记，缺小时数就输出 clarify。不传这个参数时，第 06 课到第 08 课仍是 `final`。允许列表仍然只有 `lookup_policy` 和 `quote_late_checkout`。
+
+评测要检查：缺小时数时没有调用 `quote_late_checkout`，也没有出现 30、60、90，也没有把小时数猜成 1。写明了小时数时，仍调用计价工具。
 
 ## 12 流式输出
 
