@@ -15,3 +15,4 @@ lessons:
 	$(PY) lessons/07-agent-loop/exercise.py
 	$(PY) lessons/08-tiny-eval/exercise.py
 	$(PY) lessons/09-hybrid-retrieval/exercise.py
+	$(PY) lessons/10-rerank/exercise.py

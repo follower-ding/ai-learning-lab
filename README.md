@@ -19,11 +19,11 @@ python lessons/01-llm-api/exercise.py
 
 虚拟环境激活之后，用环境里的 `python`。系统上如果只有 `python3`，上面第一行已经用它建好环境。
 
-`make test` 跑测试，`make lessons` 按顺序跑完九课练习。这两条默认调用 `python3`；要用虚拟环境里的解释器时写成 `make test PY=python`。
+`make test` 跑测试，`make lessons` 按顺序跑完十课练习。这两条默认调用 `python3`；要用虚拟环境里的解释器时写成 `make test PY=python`。
 
 ## 课程
 
-按编号做。第 05 课和第 06 课都接在向量库之后；第 07 课接工具调用；第 08 课把检索和工具放进同一套用例。第 09 课回到检索：关键词和向量各留一个分，加权之后再决定过不过线。
+按编号做。第 05 课和第 06 课都接在向量库之后；第 07 课接工具调用；第 08 课把检索和工具放进同一套用例。第 09 课回到检索：关键词和向量各留一个分，加权之后再决定过不过线。第 10 课仍用第 04 课的库，先宽取 20 条，只对这一批重打分，留下 4 条交给第 05 课。
 
 | 课 | 目录 | 做完时你手里有什么 |
 | --- | --- | --- |
@@ -36,8 +36,9 @@ python lessons/01-llm-api/exercise.py
 | 07 | [有上限的循环](lessons/07-agent-loop/README.md) | 步数用尽或重复调用时停下来，不编一个结果圆场 |
 | 08 | [小评测](lessons/08-tiny-eval/README.md) | 9 条用例分别检查引用、拒绝和工具 |
 | 09 | [混合检索](lessons/09-hybrid-retrieval/README.md) | 关键词分和向量分按固定权重合成；无关问法仍然拒绝 |
+| 10 | [重排序](lessons/10-rerank/README.md) | 先宽取 20 条，只对这一批重打分，留下 4 条；不发明新的 id |
 
-第 10 课往后还没有练习，写在 [ROADMAP.md](ROADMAP.md)。
+第 11 课往后还没有练习，写在 [ROADMAP.md](ROADMAP.md)。
 
 ## 仓库怎么分
 
@@ -48,14 +49,14 @@ python lessons/01-llm-api/exercise.py
 
 ## 密钥
 
-仓库里只有 [`.env.example`](.env.example)。把它复制成 `.env` 之后再填写，`.env` 已经被忽略。九课练习不读取这些变量。
+仓库里只有 [`.env.example`](.env.example)。把它复制成 `.env` 之后再填写，`.env` 已经被忽略。十课练习不读取这些变量。
 
 真实调用放在 `OpenAICompatibleClient` 和 `OpenAICompatibleEmbedder`。它们和 Mock、TF-IDF 共用 `complete` / `embed`。练习里构造客户端的那几行可以换，后面的解析不用换。异常文本会抹掉 `sk-...` 和 `Bearer ...` 的样式。
 
 ## 再加一课
 
-1. 新建 `lessons/10-你的题目/README.md` 和 `exercise.py`。笔记里写学习目标、概念、怎么跑、常见坑、三道口头自查。
-2. 练习打印的第一行含有 `第 10 课`。
+1. 新建 `lessons/11-你的题目/README.md` 和 `exercise.py`。笔记里写学习目标、概念、怎么跑、常见坑、三道口头自查。
+2. 练习打印的第一行含有 `第 11 课`。
 3. 把路径加进 `tests/test_exercises.py` 的 `LESSONS`。
 4. 需要新行为时，先写一条会失败的测试，再改 `src/ailab/`。不要把密钥写进练习或测试。
 5. 更新上面的表，并在路线图里把这一课从「未写」改成「已有练习」。
