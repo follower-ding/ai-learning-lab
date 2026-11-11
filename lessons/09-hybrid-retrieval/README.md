@@ -94,4 +94,6 @@ python lessons/09-hybrid-retrieval/exercise.py
 
 ## 下一课
 
-[路线图](../../ROADMAP.md) 里的第 10 课到第 15 课还没有练习。
+[第 10 课：重排序](../10-rerank/README.md)
+
+第 12 课到第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。

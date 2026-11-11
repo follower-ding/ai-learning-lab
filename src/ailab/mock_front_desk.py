@@ -23,7 +23,7 @@ PLAIN_FALLBACK = "我目前只准备了入住、退房、早餐、停车、宠�
 def respond(messages: list[Message]) -> str:
     system = "\n".join(message.content for message in messages if message.role == "system")
     if "【工具协议】" in system:
-        return _tool_response(messages)
+        return _tool_response(messages, system)
     if "【意图分类】" in system:
         return _intent_response(messages)
     if "【检索资料】" in system:
@@ -55,7 +55,7 @@ def _rag_response(system: str) -> str:
     return f"{body} 来源：[{source_id}]"
 
 
-def _tool_response(messages: list[Message]) -> str:
+def _tool_response(messages: list[Message], system: str) -> str:
     tool_messages = [message for message in messages if message.role == "tool"]
     if tool_messages:
         last = tool_messages[-1]
@@ -67,6 +67,12 @@ def _tool_response(messages: list[Message]) -> str:
     asks_late_checkout = "延迟退房" in question or ("退房" in question and hours is not None)
     if asks_late_checkout and "取消" not in question:
         if hours is None:
+            # 第 11 课才打开【缺槽先问】。没有这个标记时仍用 final，第 06 到 08 课不变。
+            if "【缺槽先问】" in system:
+                return json.dumps(
+                    {"type": "clarify", "question": "要延迟几小时？"},
+                    ensure_ascii=False,
+                )
             answer = "请告诉我要延迟几小时。规章里没有默认时长，我不会猜一个数字。"
             return json.dumps({"type": "final", "answer": answer}, ensure_ascii=False)
         payload = {

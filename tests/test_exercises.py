@@ -19,6 +19,12 @@ LESSONS = [
     "lessons/07-agent-loop/exercise.py",
     "lessons/08-tiny-eval/exercise.py",
     "lessons/09-hybrid-retrieval/exercise.py",
+    "lessons/10-rerank/exercise.py",
+    "lessons/11-clarify-missing-slot/exercise.py",
+    "lessons/12-streaming-output/exercise.py",
+    "lessons/13-material-is-data/exercise.py",
+    "lessons/14-minimal-trace/exercise.py",
+    "lessons/15-real-api-compare/exercise.py",
 ]
 
 
@@ -36,7 +42,8 @@ def test_exercise_runs(relative: str) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
     env["PYTHONIOENCODING"] = "utf-8"
-    env.pop("OPENAI_API_KEY", None)
+    # 空字符串留在环境里，练习里的 load_dotenv(override=False) 就不会从 .env 填回密钥。
+    env["OPENAI_API_KEY"] = ""
     completed = subprocess.run(
         [sys.executable, relative],
         cwd=ROOT,
