@@ -19,3 +19,4 @@ lessons:
 	$(PY) lessons/11-clarify-missing-slot/exercise.py
 	$(PY) lessons/12-streaming-output/exercise.py
 	$(PY) lessons/13-material-is-data/exercise.py
+	$(PY) lessons/14-minimal-trace/exercise.py

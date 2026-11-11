@@ -69,4 +69,6 @@ python lessons/13-material-is-data/exercise.py
 
 ## 下一课
 
-第 14 课和第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。
+[第 14 课：最小追踪](../14-minimal-trace/README.md)
+
+第 15 课还没有练习，写在 [路线图](../../ROADMAP.md)。
