@@ -65,3 +65,7 @@ python lessons/01-llm-api/exercise.py
 3. 把路径加进 `tests/test_exercises.py` 的 `LESSONS`。
 4. 需要新行为时，先写一条会失败的测试，再改 `src/ailab/`。不要把密钥写进练习或测试。
 5. 更新上面的表，并在路线图里把这一课从「未写」改成「已有练习」。
+
+## 演示与评测
+
+岸港酒店的演示和评测在 [`apps/hotel-rag/`](apps/hotel-rag/README.md)。这不是新的一课。`make hotel-rag-demo` 离线跑四条固定案例，`make hotel-rag-eval` 仍评第 08 课那 9 条。这两条没有接进 `make lessons`。

@@ -1,6 +1,6 @@
 PY ?= python3
 
-.PHONY: test lessons
+.PHONY: test lessons hotel-rag-demo hotel-rag-eval
 
 test:
 	$(PY) -m pytest
@@ -21,3 +21,9 @@ lessons:
 	$(PY) lessons/13-material-is-data/exercise.py
 	$(PY) lessons/14-minimal-trace/exercise.py
 	$(PY) lessons/15-real-api-compare/exercise.py
+
+hotel-rag-demo:
+	$(PY) apps/hotel-rag/demo.py
+
+hotel-rag-eval:
+	$(PY) apps/hotel-rag/eval.py
