@@ -17,3 +17,4 @@ lessons:
 	$(PY) lessons/09-hybrid-retrieval/exercise.py
 	$(PY) lessons/10-rerank/exercise.py
 	$(PY) lessons/11-clarify-missing-slot/exercise.py
+	$(PY) lessons/12-streaming-output/exercise.py

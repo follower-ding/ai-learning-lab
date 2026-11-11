@@ -21,6 +21,7 @@ LESSONS = [
     "lessons/09-hybrid-retrieval/exercise.py",
     "lessons/10-rerank/exercise.py",
     "lessons/11-clarify-missing-slot/exercise.py",
+    "lessons/12-streaming-output/exercise.py",
 ]
 
 
